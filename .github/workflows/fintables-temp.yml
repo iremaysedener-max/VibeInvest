@@ -1,0 +1,44 @@
+name: Fintables Temporary Export
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fintables-temp.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch live Fintables data
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.request
+
+          url = "https://api.fintables.com/funds/yield/?fund_type=mutual"
+          req = urllib.request.Request(
+              url,
+              headers={
+                  "Accept": "application/json",
+                  "User-Agent": "Mozilla/5.0 (compatible; data-validation/1.0)",
+              },
+          )
+          with urllib.request.urlopen(req, timeout=120) as response:
+              payload = response.read()
+              status = response.status
+          print(f"HTTP {status}; bytes={len(payload)}")
+          parsed = json.loads(payload)
+          print(f"results={len(parsed.get('results', []))}")
+          with open("fintables.json", "wb") as fh:
+              fh.write(payload)
+          PY
+      - name: Upload response
+        uses: actions/upload-artifact@v4
+        with:
+          name: fintables-live-data
+          path: fintables.json
+          retention-days: 1
