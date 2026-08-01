@@ -1,1 +1,1 @@
-temporary trigger 2026-08-01 API probe run
+temporary trigger 2026-08-01 TEFAS investor history export
