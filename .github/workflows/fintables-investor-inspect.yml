@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - temp-fintables-investors-20260801
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
