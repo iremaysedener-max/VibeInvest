@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Inspect Fintables page assets
         run: |
+          echo "Inspecting live investor data endpoints"
           python - <<'PY'
           import os, re, json, requests
           from urllib.parse import urljoin
