@@ -1,9 +1,8 @@
 name: Fintables Temporary Export
 
 on:
-  push:
-    paths:
-      - '.github/workflows/fintables-temp.yml'
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
