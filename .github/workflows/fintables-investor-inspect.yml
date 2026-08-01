@@ -1,0 +1,48 @@
+name: Temporary Fintables investor API inspection
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect Fintables page assets
+        run: |
+          python - <<'PY'
+          import os, re, json, requests
+          from urllib.parse import urljoin
+          os.makedirs('out', exist_ok=True)
+          url='https://fintables.com/fonlar/FNT'
+          s=requests.Session()
+          s.headers.update({'User-Agent':'Mozilla/5.0'})
+          r=s.get(url,timeout=30)
+          print('page',r.status_code,len(r.text))
+          open('out/page.html','w',encoding='utf-8').write(r.text)
+          scripts=re.findall(r'<script[^>]+src=["\']([^"\']+)',r.text)
+          print('scripts',len(scripts))
+          matches=[]
+          for i,src in enumerate(scripts):
+            u=urljoin(url,src)
+            try:
+              rr=s.get(u,timeout=30)
+              text=rr.text
+              open(f'out/script_{i}.js','w',encoding='utf-8').write(text)
+              for pat in ['api.fintables.com','investor','yatirimci','participant','shareholder','fund_value','cash_flow']:
+                if pat.lower() in text.lower():
+                  matches.append({'i':i,'url':u,'pattern':pat,'length':len(text)})
+            except Exception as e:
+              matches.append({'i':i,'url':u,'error':str(e)})
+          open('out/matches.json','w',encoding='utf-8').write(json.dumps(matches,ensure_ascii=False,indent=2))
+          print(json.dumps(matches,ensure_ascii=False,indent=2))
+          PY
+          grep -RoiE 'https://api\.fintables\.com[^"'"'"' )}]+' out/*.js | sort -u > out/api_urls.txt || true
+          grep -RniE 'investor|yatirimci|participant|shareholder' out/*.js | head -500 > out/investor_grep.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fintables-investor-inspect
+          path: out
