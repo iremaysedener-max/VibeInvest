@@ -1,4 +1,4 @@
-name: Temporary Fintables investor API inspection
+name: Temporary TEFAS investor history export
 
 on:
   pull_request:
@@ -7,50 +7,102 @@ on:
   workflow_dispatch:
 
 jobs:
-  inspect:
+  export:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Probe Fintables API
+      - name: Install clients
+        run: pip install tefas-client==2.1.1 curl_cffi
+      - name: Export investor history
         run: |
+          mkdir -p out
           python - <<'PY'
-          import os, json, requests
-          from urllib.parse import urljoin
-          os.makedirs('out', exist_ok=True)
-          base='https://api.fintables.com'
-          candidates=[
-            '/', '/openapi.json', '/swagger.json', '/swagger/', '/docs/', '/redoc/', '/schema/', '/api/schema/',
-            '/funds/yield/?fund_type=mutual', '/funds/FNT/', '/funds/FNT', '/funds/detail/FNT/', '/funds/summary/FNT/',
-            '/funds/FNT/history/', '/funds/FNT/chart/', '/funds/FNT/graph/', '/funds/FNT/flow/', '/funds/FNT/cash-flow/',
-            '/funds/FNT/investor/', '/funds/FNT/investors/', '/funds/FNT/investor-count/', '/funds/FNT/investor_count/',
-            '/funds/investor/?code=FNT', '/funds/investors/?code=FNT', '/funds/investor-count/?code=FNT',
-            '/funds/investor_count/?code=FNT', '/funds/investor-history/?code=FNT', '/funds/investor_history/?code=FNT',
-            '/funds/chart/?code=FNT', '/funds/history/?code=FNT', '/funds/flow/?code=FNT',
-            '/funds/investor/?fund_code=FNT', '/funds/investor-count/?fund_code=FNT', '/funds/investor_history/?fund_code=FNT',
-            '/funds/FNT/?period=3m', '/funds/FNT/history/?period=3m', '/funds/FNT/chart/?period=3m'
-          ]
-          s=requests.Session(); s.headers.update({'User-Agent':'Mozilla/5.0','Accept':'application/json,text/plain,*/*','Origin':'https://fintables.com','Referer':'https://fintables.com/'})
-          results=[]
-          for path in candidates:
-            url=urljoin(base,path)
-            try:
-              r=s.get(url,timeout=30,allow_redirects=True)
-              rec={'path':path,'url':url,'status':r.status_code,'ctype':r.headers.get('content-type'),'len':len(r.content),'final_url':r.url,'text':r.text[:2000]}
-            except Exception as e:
-              rec={'path':path,'url':url,'error':repr(e)}
-            results.append(rec)
-            print(json.dumps(rec,ensure_ascii=False))
-          with open('out/probe.json','w',encoding='utf-8') as f: json.dump(results,f,ensure_ascii=False,indent=2)
-          # OPTIONS probes for likely roots
-          opts=[]
-          for path in ['/funds/','/funds/yield/','/funds/FNT/']:
-            try:
-              r=s.options(urljoin(base,path),timeout=30)
-              opts.append({'path':path,'status':r.status_code,'headers':dict(r.headers),'text':r.text[:4000]})
-            except Exception as e: opts.append({'path':path,'error':repr(e)})
-          with open('out/options.json','w',encoding='utf-8') as f: json.dump(opts,f,ensure_ascii=False,indent=2)
+          import json, traceback
+          from datetime import date
+
+          out = {"client": {}, "curl_cffi": {}, "errors": []}
+
+          # Preferred route: maintained TEFAS client using the official JSON API.
+          try:
+              from tefas_client import Tefas
+              with Tefas(timeout=60) as tefas:
+                  windows = {
+                      "baseline": (date(2026, 4, 20), date(2026, 5, 1)),
+                      "current": (date(2026, 7, 20), date(2026, 7, 31)),
+                  }
+                  for label, (start, end) in windows.items():
+                      funds = tefas.fetch(
+                          fund_type="YAT",
+                          start_date=start,
+                          end_date=end,
+                      )
+                      out["client"][label] = {
+                          code: [
+                              {
+                                  "date": h.date.isoformat(),
+                                  "price": h.price,
+                                  "market_cap": h.market_cap,
+                                  "number_of_shares": h.number_of_shares,
+                                  "number_of_investors": h.number_of_investors,
+                              }
+                              for h in fund.history
+                          ]
+                          for code, fund in funds.items()
+                      }
+                      print(label, "funds", len(funds))
+          except Exception as exc:
+              out["errors"].append({"route": "tefas-client", "error": repr(exc), "trace": traceback.format_exc()})
+
+          # Fallback route: Chrome TLS impersonation against the same official endpoint.
+          try:
+              from curl_cffi import requests
+              url = "https://www.tefas.gov.tr/api/funds/fonGnlBlgSiraliGetir"
+              headers = {
+                  "Origin": "https://www.tefas.gov.tr",
+                  "Referer": "https://www.tefas.gov.tr/tr/fon-verileri",
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                  "Accept": "application/json, text/plain, */*",
+                  "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
+                  "Content-Type": "application/json",
+              }
+              for label, start, end in [
+                  ("baseline", "20260420", "20260501"),
+                  ("current", "20260720", "20260731"),
+              ]:
+                  payload = {
+                      "fonTipi": "YAT",
+                      "fonKodu": None,
+                      "aramaMetni": None,
+                      "fonTurKod": None,
+                      "fonGrubu": None,
+                      "sfonTurKod": None,
+                      "basTarih": start,
+                      "bitTarih": end,
+                      "basSira": 1,
+                      "bitSira": 9999,
+                      "fonTurAciklama": None,
+                      "dil": "TR",
+                      "kurucuKod": None,
+                      "sira": None,
+                      "yon": None,
+                  }
+                  r = requests.post(url, json=payload, headers=headers, timeout=90, impersonate="chrome124")
+                  rec = {"status": r.status_code, "headers": dict(r.headers), "text_head": r.text[:500]}
+                  try:
+                      data = r.json()
+                      rec["data"] = data
+                      print("curl", label, r.status_code, len(data.get("resultList") or []))
+                  except Exception:
+                      pass
+                  out["curl_cffi"][label] = rec
+          except Exception as exc:
+              out["errors"].append({"route": "curl_cffi", "error": repr(exc), "trace": traceback.format_exc()})
+
+          with open("out/tefas-investor-history.json", "w", encoding="utf-8") as f:
+              json.dump(out, f, ensure_ascii=False)
+          print(json.dumps(out["errors"], ensure_ascii=False, indent=2))
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: fintables-investor-inspect
-          path: out
+          name: tefas-investor-history
+          path: out/tefas-investor-history.json
